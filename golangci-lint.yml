@@ -1,0 +1,35 @@
+linters-settings:
+  golint:
+    min-confidence: 0
+  maligned:
+    suggest-new: true
+  goconst:
+    min-len: 2
+    min-occurrences: 2
+  misspell:
+    locale: US,UK
+  lll:
+    line-length: 120
+  goimports:
+    local-prefixes: github.com/golangci/golangci-lint
+  gocritic:
+    enabled-tags:
+      - performance
+      - style
+      - experimental
+    disabled-checks:
+      - sloppyReassign
+
+linters:
+  # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
+  enable-all: true
+  disable:
+    - gochecknoglobals
+    - gomnd
+    - gochecknoinits
+    - exhaustivestruct
+
+run:
+  skip-files:
+    - test
+#    - initialize.go
