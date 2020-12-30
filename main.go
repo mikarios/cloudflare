@@ -16,6 +16,7 @@ var (
 	apiToken  = flag.String("token", "", "Your cloudflare API token")
 	zoneName  = flag.String("zone", "", "Your zone name. e.g. ikarios.dev")
 	subDomain = flag.String("subdomain", "", "The subdomain you wish to create/update. e.g. home")
+	proxied   = flag.Bool("proxied", true, "true/false depending on whether you want cloudflare to proxy your IP address")
 )
 
 func main() {
@@ -53,7 +54,7 @@ func main() {
 			Type:    "A",
 			Name:    fqdn,
 			Content: myIP,
-			Proxied: true,
+			Proxied: *proxied,
 			TTL:     1,
 			ZoneID:  zoneID,
 		})
@@ -68,6 +69,8 @@ func main() {
 		logrus.Infof("Updating DNS. Old IP: %s, New IP: %s", existingDNS[0].Content, myIP)
 
 		existingDNS[0].Content = myIP
+		existingDNS[0].Proxied = *proxied
+
 		if err := api.UpdateDNSRecord(zoneID, existingDNS[0].ID, existingDNS[0]); err != nil {
 			panic(err)
 		}
@@ -92,6 +95,9 @@ func findMyIP() (string, error) {
 	defer resp.Body.Close()
 
 	ip, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("could not parse ip, error: %w", err)
+	}
 
-	return string(ip), fmt.Errorf("could not parse ip, error: %w", err)
+	return string(ip), nil
 }

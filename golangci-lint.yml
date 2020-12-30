@@ -28,6 +28,7 @@ linters:
     - gomnd
     - gochecknoinits
     - exhaustivestruct
+    - gomodguard
 
 run:
   skip-files:
