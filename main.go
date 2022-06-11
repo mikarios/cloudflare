@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 
@@ -21,6 +21,8 @@ var (
 
 func main() {
 	flag.Parse()
+
+	ctx := context.Background()
 
 	*subDomain = strings.TrimSuffix(*subDomain, *zoneName)
 	*subDomain = strings.TrimSuffix(*subDomain, ".")
@@ -42,7 +44,7 @@ func main() {
 		panic(err)
 	}
 
-	existingDNS, err := api.DNSRecords(zoneID, cloudflare.DNSRecord{Name: fqdn})
+	existingDNS, err := api.DNSRecords(ctx, zoneID, cloudflare.DNSRecord{Name: fqdn})
 	if err != nil {
 		panic(err)
 	}
@@ -50,14 +52,18 @@ func main() {
 	if len(existingDNS) == 0 {
 		logrus.Info("DNS record not found. Adding it")
 
-		_, err := api.CreateDNSRecord(zoneID, cloudflare.DNSRecord{
-			Type:    "A",
-			Name:    fqdn,
-			Content: myIP,
-			Proxied: *proxied,
-			TTL:     1,
-			ZoneID:  zoneID,
-		})
+		_, err := api.CreateDNSRecord(
+			ctx,
+			zoneID,
+			cloudflare.DNSRecord{
+				Type:    "A",
+				Name:    fqdn,
+				Content: myIP,
+				Proxied: proxied,
+				TTL:     1,
+				ZoneID:  zoneID,
+			},
+		)
 		if err != nil {
 			panic(err)
 		}
@@ -69,9 +75,9 @@ func main() {
 		logrus.Infof("Updating DNS. Old IP: %s, New IP: %s", existingDNS[0].Content, myIP)
 
 		existingDNS[0].Content = myIP
-		existingDNS[0].Proxied = *proxied
+		existingDNS[0].Proxied = proxied
 
-		if err := api.UpdateDNSRecord(zoneID, existingDNS[0].ID, existingDNS[0]); err != nil {
+		if err := api.UpdateDNSRecord(ctx, zoneID, existingDNS[0].ID, existingDNS[0]); err != nil {
 			panic(err)
 		}
 	}
@@ -82,7 +88,7 @@ func main() {
 func findMyIP() (string, error) {
 	url := "https://api.ipify.org?format=text"
 
-	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody)
 	if err != nil {
 		logrus.Error("could not create request", err)
 	}
@@ -94,7 +100,7 @@ func findMyIP() (string, error) {
 
 	defer resp.Body.Close()
 
-	ip, err := ioutil.ReadAll(resp.Body)
+	ip, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("could not parse ip, error: %w", err)
 	}
