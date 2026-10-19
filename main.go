@@ -4,11 +4,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"net"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
-	"github.com/cloudflare/cloudflare-go"
+	"github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/dns"
+	"github.com/cloudflare/cloudflare-go/v7/option"
+	"github.com/cloudflare/cloudflare-go/v7/zones"
 	"github.com/sirupsen/logrus"
 )
 
@@ -22,82 +28,111 @@ var (
 func main() {
 	flag.Parse()
 
+	if *apiToken == "" || *zoneName == "" {
+		flag.Usage()
+		os.Exit(2)
+	}
+
+	ctx := context.Background()
+
 	*subDomain = strings.TrimSuffix(*subDomain, *zoneName)
 	*subDomain = strings.TrimSuffix(*subDomain, ".")
 
 	fqdn := *subDomain + "." + *zoneName
 
-	myIP, err := findMyIP()
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	myIP, err := findMyIP(httpClient, "https://api.ipify.org?format=text")
 	if err != nil {
-		panic(err)
+		logrus.WithError(err).Fatal("could not determine public IP")
 	}
 
-	api, err := cloudflare.NewWithAPIToken(*apiToken)
+	api := cloudflare.NewClient(option.WithAPIToken(*apiToken))
+
+	zonesPage, err := api.Zones.List(ctx, zones.ZoneListParams{
+		Name: cloudflare.F(*zoneName),
+	})
 	if err != nil {
-		panic(err)
+		logrus.WithError(err).Fatal("could not look up zone")
+	}
+	if len(zonesPage.Result) == 0 {
+		logrus.WithField("zone", *zoneName).Fatal("zone not found")
+	}
+	zoneID := zonesPage.Result[0].ID
+
+	recordsPage, err := api.DNS.Records.List(ctx, dns.RecordListParams{
+		ZoneID: cloudflare.F(zoneID),
+		Name:   cloudflare.F(dns.RecordListParamsName{Exact: cloudflare.F(fqdn)}),
+	})
+	if err != nil {
+		logrus.WithError(err).Fatal("could not list DNS records")
 	}
 
-	zoneID, err := api.ZoneIDByName(*zoneName)
-	if err != nil {
-		panic(err)
-	}
-
-	existingDNS, err := api.DNSRecords(zoneID, cloudflare.DNSRecord{Name: fqdn})
-	if err != nil {
-		panic(err)
-	}
-
-	if len(existingDNS) == 0 {
+	if len(recordsPage.Result) == 0 {
 		logrus.Info("DNS record not found. Adding it")
 
-		_, err := api.CreateDNSRecord(zoneID, cloudflare.DNSRecord{
-			Type:    "A",
-			Name:    fqdn,
-			Content: myIP,
-			Proxied: *proxied,
-			TTL:     1,
-			ZoneID:  zoneID,
+		_, err := api.DNS.Records.New(ctx, dns.RecordNewParams{
+			ZoneID: cloudflare.F(zoneID),
+			Body: dns.ARecordParam{
+				Name:    cloudflare.F(fqdn),
+				TTL:     cloudflare.F(dns.TTL1),
+				Type:    cloudflare.F(dns.ARecordTypeA),
+				Content: cloudflare.F(myIP),
+				Proxied: cloudflare.F(*proxied),
+			},
 		})
 		if err != nil {
-			panic(err)
+			logrus.WithError(err).Fatal("could not create DNS record")
 		}
 
 		return
 	}
 
-	if existingDNS[0].Content != myIP {
-		logrus.Infof("Updating DNS. Old IP: %s, New IP: %s", existingDNS[0].Content, myIP)
+	if recordsPage.Result[0].Content != myIP {
+		logrus.Infof("Updating DNS. Old IP: %s, New IP: %s", recordsPage.Result[0].Content, myIP)
 
-		existingDNS[0].Content = myIP
-		existingDNS[0].Proxied = *proxied
-
-		if err := api.UpdateDNSRecord(zoneID, existingDNS[0].ID, existingDNS[0]); err != nil {
-			panic(err)
+		_, err := api.DNS.Records.Update(ctx, recordsPage.Result[0].ID, dns.RecordUpdateParams{
+			ZoneID: cloudflare.F(zoneID),
+			Body: dns.ARecordParam{
+				Name:    cloudflare.F(fqdn),
+				TTL:     cloudflare.F(dns.TTL1),
+				Type:    cloudflare.F(dns.ARecordTypeA),
+				Content: cloudflare.F(myIP),
+				Proxied: cloudflare.F(*proxied),
+			},
+		})
+		if err != nil {
+			logrus.WithError(err).Fatal("could not update DNS record")
 		}
 	}
 
 	logrus.Info("Finished")
 }
 
-func findMyIP() (string, error) {
-	url := "https://api.ipify.org?format=text"
-
-	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+func findMyIP(client *http.Client, url string) (string, error) {
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody)
 	if err != nil {
-		logrus.Error("could not create request", err)
+		return "", fmt.Errorf("could not create request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
-		logrus.Error("could not get site", err)
+		return "", fmt.Errorf("could not get site: %w", err)
 	}
-
 	defer resp.Body.Close()
 
-	ip, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("could not parse ip, error: %w", err)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("unexpected status %d from %s", resp.StatusCode, url)
 	}
 
-	return string(ip), nil
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("could not read ip response: %w", err)
+	}
+
+	parsed := net.ParseIP(strings.TrimSpace(string(body)))
+	if parsed == nil {
+		return "", fmt.Errorf("could not parse ip from response %q", string(body))
+	}
+
+	return parsed.String(), nil
 }

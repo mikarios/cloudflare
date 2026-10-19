@@ -1,36 +1,78 @@
 linters-settings:
-  golint:
-    min-confidence: 0
-  maligned:
-    suggest-new: true
+  govet:
+    check-shadowing: true
   goconst:
     min-len: 2
     min-occurrences: 2
   misspell:
-    locale: US,UK
+    locale: UK
   lll:
     line-length: 120
   goimports:
-    local-prefixes: github.com/golangci/golangci-lint
+    local-prefixes: github.com/mikarios/
+  gci:
+    local-prefixes: github.com/mikarios/
+  funlen:
+    lines: 90
   gocritic:
     enabled-tags:
       - performance
       - style
       - experimental
     disabled-checks:
-      - sloppyReassign
+      - appendAssign
+  cyclop:
+    max-complexity: 30
+    package-average: 0.0
+    skip-tests: true
+  revive:
+    # see https://github.com/mgechev/revive#available-rules for details.
+    ignore-generated-header: true
+    severity: warning
+    rules:
+      - name: indent-error-flow
+        severity: warning
+      - name: add-constant
+        severity: warning
+  gomnd:
+    settings:
+      mnd:
+        ignored-functions:
+          - now.Add
+          - context.WithTimeout
+          - db.New
+          - day.Add
+  godox:
+    keywords:
+      - FIXME
+      - BUG
 
 linters:
   # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
   enable-all: true
   disable:
-    - gochecknoglobals
-    - gomnd
-    - gochecknoinits
+    - wrapcheck
     - exhaustivestruct
-    - gomodguard
+    - gochecknoglobals
+    - gci
+    - maligned
+    - interfacer
+    - scopelint
+    - tagliatelle
+    - gochecknoinits
+    - revive
+    - golint
+    - gomnd
+    - dupl
+    - nlreturn
+    - varnamelen
+    - ireturn
+    - exhaustive
+    - errchkjson
+    - nonamedreturns
+    - exhaustruct
+    - execinquery
 
 run:
   skip-files:
-    - test
-#    - initialize.go
+#    - test
